@@ -366,7 +366,6 @@ class Parser:
         res = ParseResult()
         if self.currentTok.matches(KR_KEYWORD, 'assign'):
             res.register(self.proceed())
-
             if  self.currentTok.type != KR_IDENTIFIER:
                 return res.failure(InvalidSyntaxError(
                     self.currentTok.posStart, self.currentTok.posEnd,
@@ -375,8 +374,8 @@ class Parser:
 
             varName = self.currentTok
             res.register(self.proceed())
-
-            if self.currentTok != '=':
+            
+            if self.currentTok.type != KR_EQ:
                 return res.failure(InvalidSyntaxError(
                     self.currentTok.posStart, self.currentTok.posEnd,
                     "Expected '='"
