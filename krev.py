@@ -279,20 +279,23 @@ class ParseResult:
     def __init__(self):
         self.error = None
         self.node = None
+        self.advanceCount = 0
+
+    def registerProceed(self):
+        self.advanceCount += 1
 
     def register(self, res):
-        if isinstance(res, ParseResult):
-            if res.error: self.error = res.error
-            return res.node
-
-        return res
+        self.advanceCount += res.advanceCount
+        if res.error: self.error = res.error
+        return res.node
 
     def success(self, node):
         self.node = node
         return self
 
     def failure(self, error):
-        self.error = error
+        if not self.error or self.advanceCount == 0:
+            self.error = error
         return self
 
 #######################################
@@ -327,25 +330,30 @@ class Parser:
         tok = self.currentTok
 
         if tok.type in (KR_PLUS, KR_MINUS):
-            res.register(self.proceed())
+            res.registerProceed()
+            self.proceed()
             factor = res.register(self.factor())
             if res.error: return res
             return res.success(UnaryOpNode(tok, factor))
 
         elif tok.type in (KR_INT, KR_FLOAT):
-            res.register(self.proceed())
+            res.registerProceed()
+            self.proceed()
             return res.success(NumberNode(tok))
 
         elif tok.type == KR_IDENTIFIER:
-            res.register(self.proceed())
+            res.registerProceed()
+            self.proceed()
             return res.success(VarAccessNode(tok))
 
         elif tok.type == KR_LPAREN:
-            res.register(self.proceed())
+            res.registerProceed()
+            self.proceed()
             expr = res.register(self.expr())
             if res.error: return res
             if self.currentTok.type == KR_RPAREN:
-                res.register(self.proceed())
+                res.registerProceed()
+                self.proceed()
                 return res.success(expr)
         
             else:
@@ -356,7 +364,7 @@ class Parser:
 
         return res.failure(InvalidSyntaxError(
             tok.posStart, tok.posEnd,
-            "Expected int or float"
+            "Expected int, float or identifier"
             ))
 
     def term(self):
@@ -365,7 +373,8 @@ class Parser:
     def expr(self):
         res = ParseResult()
         if self.currentTok.matches(KR_KEYWORD, 'assign'):
-            res.register(self.proceed())
+            res.registerProceed()
+            self.proceed()
             if  self.currentTok.type != KR_IDENTIFIER:
                 return res.failure(InvalidSyntaxError(
                     self.currentTok.posStart, self.currentTok.posEnd,
@@ -373,7 +382,8 @@ class Parser:
                 ))
 
             varName = self.currentTok
-            res.register(self.proceed())
+            res.registerProceed()
+            self.proceed()
             
             if self.currentTok.type != KR_EQ:
                 return res.failure(InvalidSyntaxError(
@@ -381,12 +391,21 @@ class Parser:
                     "Expected '='"
                 ))
 
-            res.register(self.proceed())
+            res.registerProceed()
+            self.proceed()
             expr = res.register(self.expr())
             if res.error: return res
             return res.success(VarAssignNode(varName, expr))
 
-        return self.binOp(self.term, (KR_PLUS, KR_MINUS, KR_REM, KR_POW))
+        node = res.register(self.binOp(self.term, (KR_PLUS, KR_MINUS, KR_REM, KR_POW)))
+
+        if res.error:
+            return res.failure(InvalidSyntaxError(
+                self.currentTok.posStart, self.currentTok.posEnd,
+                'Expected valid keyword or data type'
+            ))
+        
+        return res.success(node)
 
     ###################################
 
@@ -397,7 +416,8 @@ class Parser:
 
         while self.currentTok.type in ops:
             opTok = self.currentTok
-            res.register(self.proceed())
+            res.registerProceed()
+            self.proceed()
             right = res.register(func())
             if res.error: return res
             left = BinOpNode(left, opTok, right)
@@ -482,6 +502,12 @@ class Number:
         if isinstance(other, Number):
             return Number(self.value ** other.value).setContext(self.context), None
 
+    def copy(self):
+        copy = Number(self.value)
+        copy.setPos(self.posStart, self.posEnd)
+        self.setContext(self.context)
+        return copy
+
     def __repr__(self):
         return str(self.value)
 
@@ -548,7 +574,8 @@ class Interpreter:
                 f"'{varName} is not defined",
                 context
             ))
-
+        
+        value = value.copy().setPos(node.posStart, node.posEnd)
         return res.success(value)
 
     def visitVarAssignNode(self, node, context):
